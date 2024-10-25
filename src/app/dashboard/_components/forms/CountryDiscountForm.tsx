@@ -11,7 +11,9 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
 import { productCountryDiscountsSchema } from "@/schemas/products";
+import { updateCountryDiscounts } from "@/server/actions/products";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Image from "next/image";
 import { useForm } from "react-hook-form";
@@ -36,6 +38,8 @@ export function CountryDiscountForm({
     };
   }[];
 }) {
+  const { toast } = useToast();
+
   const form = useForm<z.infer<typeof productCountryDiscountsSchema>>({
     resolver: zodResolver(productCountryDiscountsSchema),
     defaultValues: {
@@ -53,8 +57,18 @@ export function CountryDiscountForm({
     },
   });
 
-  function onSubmit(values: z.infer<typeof productCountryDiscountsSchema>) {
-    console.log(values);
+  async function onSubmit(
+    values: z.infer<typeof productCountryDiscountsSchema>
+  ) {
+    const data = await updateCountryDiscounts(productId, values);
+
+    if (data?.message) {
+      toast({
+        title: data.error ? "Error" : "Success",
+        description: data.message,
+        variant: data.error ? "destructive" : "default",
+      });
+    }
   }
 
   return (
@@ -79,8 +93,7 @@ export function CountryDiscountForm({
                     height={16}
                     alt={country.name}
                     title={country.name}
-                    src={`http://purecatamphetamine.github.io/
-                    country-flag-icons/3x2/${country.code.toUpperCase()}.svg`}
+                    src={`http://purecatamphetamine.github.io/country-flag-icons/3x2/${country.code.toUpperCase()}.svg`}
                     className="border"
                   />
                 ))}
