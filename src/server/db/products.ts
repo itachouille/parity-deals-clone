@@ -12,7 +12,6 @@ import {
   getUserTag,
   revalidateDbCache,
 } from "@/lib/cache";
-import { group } from "console";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { BatchItem } from "drizzle-orm/batch";
 
@@ -64,6 +63,7 @@ export async function createProduct(data: typeof ProductTable.$inferInsert) {
       });
   } catch (error) {
     await db.delete(ProductTable).where(eq(ProductTable.id, newProduct.id));
+    console.error(error);
   }
 
   revalidateDbCache({
@@ -223,6 +223,58 @@ export async function updateCountryDiscounts(
   if (statements.length > 0) {
     await db.batch(statements as [BatchItem<"pg">]);
   }
+
+  revalidateDbCache({
+    tag: CACHE_TAGS.products,
+    userId,
+    id: productId,
+  });
+}
+
+async function getProductCustomizationInternal({
+  productId,
+  userId,
+}: {
+  productId: string;
+  userId: string;
+}) {
+  const data = await db.query.ProductTable.findFirst({
+    where: ({ id, clerkUserId }, { and, eq }) =>
+      and(eq(id, productId), eq(clerkUserId, userId)),
+    with: {
+      productCustomization: true,
+    },
+  });
+
+  return data?.productCustomization;
+}
+
+export function getProductCustomization({
+  productId,
+  userId,
+}: {
+  productId: string;
+  userId: string;
+}) {
+  const cacheFn = dbCache(getProductCustomizationInternal, {
+    tags: [getIdTag(productId, CACHE_TAGS.products)],
+  });
+
+  return cacheFn({ userId, productId });
+}
+
+export async function updateProductCustomization(
+  data: Partial<typeof ProductCustomizationTable.$inferInsert>,
+  { productId, userId }: { productId: string; userId: string }
+) {
+  const product = await getProduct({ id: productId, userId });
+
+  if (product == null) return;
+
+  await db
+    .update(ProductCustomizationTable)
+    .set(data)
+    .where(eq(ProductCustomizationTable.productId, productId));
 
   revalidateDbCache({
     tag: CACHE_TAGS.products,

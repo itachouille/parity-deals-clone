@@ -2,6 +2,7 @@
 
 import {
   productCountryDiscountsSchema,
+  productCustomizationSchema,
   productDetailsSchema,
 } from "@/schemas/products";
 import { auth } from "@clerk/nextjs/server";
@@ -11,8 +12,10 @@ import {
   deleteProduct as deleteProductDb,
   updateProduct as updateProductDb,
   updateCountryDiscounts as updateCountryDiscountsDb,
+  updateProductCustomization as updateProductCustomizationDb,
 } from "@/server/db/products";
 import { redirect } from "next/navigation";
+import { canCustomizeBanner } from "../permissions";
 
 export async function createProduct(
   unsafeData: z.infer<typeof productDetailsSchema>
@@ -108,4 +111,24 @@ export async function updateCountryDiscounts(
   await updateCountryDiscountsDb(deleteIds, insert, { productId: id, userId });
 
   return { error: false, message: "Country discounts saved" };
+}
+
+export async function updateProductCustomization(
+  id: string,
+  unsafeData: z.infer<typeof productCustomizationSchema>
+) {
+  const { userId } = await auth();
+  const { success, data } = productCustomizationSchema.safeParse(unsafeData);
+  const canCustomize = await canCustomizeBanner(userId);
+
+  if (!success || userId == null || !canCustomize) {
+    return {
+      error: true,
+      message: "There was an error updating your banner",
+    };
+  }
+
+  await updateProductCustomizationDb(data, { productId: id, userId });
+
+  return { error: false, message: "Banner updated" };
 }
