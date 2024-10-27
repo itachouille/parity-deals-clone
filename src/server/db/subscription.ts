@@ -34,12 +34,6 @@ export async function createUserSubscription(
   return newSubscription;
 }
 
-function getUserSubscriptionInternal(userId: string) {
-  return db.query.UserSubscriptionTable.findFirst({
-    where: ({ clerkUserId }, { eq }) => eq(clerkUserId, userId),
-  });
-}
-
 export function getUserSubscription(userId: string) {
   const cacheFn = dbCache(getUserSubscriptionInternal, {
     tags: [getUserTag(userId, CACHE_TAGS.subscription)],
@@ -76,4 +70,10 @@ export async function getUserSubscriptionTier(userId: string) {
   if (subscription == null) throw new Error("User has no subscription");
 
   return subscriptionTiers[subscription.tier];
+}
+
+function getUserSubscriptionInternal(userId: string) {
+  return db.query.UserSubscriptionTable.findFirst({
+    where: ({ clerkUserId }, { eq }) => eq(clerkUserId, userId),
+  });
 }

@@ -12,15 +12,40 @@ import {
   getUserTag,
   revalidateDbCache,
 } from "@/lib/cache";
+import { removeTrailingSlash } from "@/lib/utils";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { BatchItem } from "drizzle-orm/batch";
 
-function getProductsInternal(userId: string, { limit }: { limit?: number }) {
-  return db.query.ProductTable.findMany({
-    where: ({ clerkUserId }, { eq }) => eq(clerkUserId, userId),
-    orderBy: ({ createdAt }, { desc }) => desc(createdAt),
-    limit,
+export function getProductCountryGroups({
+  productId,
+  userId,
+}: {
+  productId: string;
+  userId: string;
+}) {
+  const cacheFn = dbCache(getProductCountryGroupsInternal, {
+    tags: [
+      getIdTag(productId, CACHE_TAGS.products),
+      getGlobalTag(CACHE_TAGS.countries),
+      getGlobalTag(CACHE_TAGS.countryGroups),
+    ],
   });
+
+  return cacheFn({ productId, userId });
+}
+
+export function getProductCustomization({
+  productId,
+  userId,
+}: {
+  productId: string;
+  userId: string;
+}) {
+  const cacheFn = dbCache(getProductCustomizationInternal, {
+    tags: [getIdTag(productId, CACHE_TAGS.products)],
+  });
+
+  return cacheFn({ productId, userId });
 }
 
 export function getProducts(
@@ -34,19 +59,44 @@ export function getProducts(
   return cacheFn(userId, { limit });
 }
 
-function getProductInternal({ id, userId }: { id: string; userId: string }) {
-  return db.query.ProductTable.findFirst({
-    where: ({ clerkUserId, id: idCol }, { eq, and }) =>
-      and(eq(clerkUserId, userId), eq(idCol, id)),
-  });
-}
-
 export function getProduct({ id, userId }: { id: string; userId: string }) {
   const cacheFn = dbCache(getProductInternal, {
-    tags: [getIdTag(userId, CACHE_TAGS.products)],
+    tags: [getIdTag(id, CACHE_TAGS.products)],
   });
 
   return cacheFn({ id, userId });
+}
+
+export function getProductCount(userId: string) {
+  const cacheFn = dbCache(getProductCountInternal, {
+    tags: [getUserTag(userId, CACHE_TAGS.products)],
+  });
+
+  return cacheFn(userId);
+}
+
+export function getProductForBanner({
+  id,
+  countryCode,
+  url,
+}: {
+  id: string;
+  countryCode: string;
+  url: string;
+}) {
+  const cacheFn = dbCache(getProductForBannerInternal, {
+    tags: [
+      getIdTag(id, CACHE_TAGS.products),
+      getGlobalTag(CACHE_TAGS.countries),
+      getGlobalTag(CACHE_TAGS.countryGroups),
+    ],
+  });
+
+  return cacheFn({
+    id,
+    countryCode,
+    url,
+  });
 }
 
 export async function createProduct(data: typeof ProductTable.$inferInsert) {
@@ -66,7 +116,7 @@ export async function createProduct(data: typeof ProductTable.$inferInsert) {
       });
   } catch (error) {
     await db.delete(ProductTable).where(eq(ProductTable.id, newProduct.id));
-    console.error(error);
+    console.log(error);
   }
 
   revalidateDbCache({
@@ -118,64 +168,6 @@ export async function deleteProduct({
   }
 
   return rowCount > 0;
-}
-
-async function getProductCountryGroupsInternal({
-  productId,
-  userId,
-}: {
-  productId: string;
-  userId: string;
-}) {
-  const product = await getProduct({ id: productId, userId });
-  if (product == null) return [];
-
-  const data = await db.query.CountryGroupTable.findMany({
-    with: {
-      countries: {
-        columns: {
-          name: true,
-          code: true,
-        },
-      },
-      countryGroupDiscounts: {
-        columns: {
-          coupon: true,
-          discountPercentage: true,
-        },
-        where: ({ productId: id }, { eq }) => eq(id, productId),
-        limit: 1,
-      },
-    },
-  });
-
-  return data.map((group) => {
-    return {
-      id: group.id,
-      name: group.name,
-      recommendedDiscountPercentage: group.recommendedDiscountPercentage,
-      countries: group.countries,
-      discount: group.countryGroupDiscounts.at(0),
-    };
-  });
-}
-
-export function getProductCountryGroups({
-  productId,
-  userId,
-}: {
-  productId: string;
-  userId: string;
-}) {
-  const cacheFn = dbCache(getProductCountryGroupsInternal, {
-    tags: [
-      getIdTag(productId, CACHE_TAGS.products),
-      getGlobalTag(CACHE_TAGS.countries),
-      getGlobalTag(CACHE_TAGS.countryGroups),
-    ],
-  });
-
-  return cacheFn({ userId, productId });
 }
 
 export async function updateCountryDiscounts(
@@ -234,44 +226,11 @@ export async function updateCountryDiscounts(
   });
 }
 
-async function getProductCustomizationInternal({
-  productId,
-  userId,
-}: {
-  productId: string;
-  userId: string;
-}) {
-  const data = await db.query.ProductTable.findFirst({
-    where: ({ id, clerkUserId }, { and, eq }) =>
-      and(eq(id, productId), eq(clerkUserId, userId)),
-    with: {
-      productCustomization: true,
-    },
-  });
-
-  return data?.productCustomization;
-}
-
-export function getProductCustomization({
-  productId,
-  userId,
-}: {
-  productId: string;
-  userId: string;
-}) {
-  const cacheFn = dbCache(getProductCustomizationInternal, {
-    tags: [getIdTag(productId, CACHE_TAGS.products)],
-  });
-
-  return cacheFn({ userId, productId });
-}
-
 export async function updateProductCustomization(
   data: Partial<typeof ProductCustomizationTable.$inferInsert>,
   { productId, userId }: { productId: string; userId: string }
 ) {
   const product = await getProduct({ id: productId, userId });
-
   if (product == null) return;
 
   await db
@@ -286,6 +245,79 @@ export async function updateProductCustomization(
   });
 }
 
+async function getProductCountryGroupsInternal({
+  userId,
+  productId,
+}: {
+  userId: string;
+  productId: string;
+}) {
+  const product = await getProduct({ id: productId, userId });
+  if (product == null) return [];
+
+  const data = await db.query.CountryGroupTable.findMany({
+    with: {
+      countries: {
+        columns: {
+          name: true,
+          code: true,
+        },
+      },
+      countryGroupDiscounts: {
+        columns: {
+          coupon: true,
+          discountPercentage: true,
+        },
+        where: ({ productId: id }, { eq }) => eq(id, productId),
+        limit: 1,
+      },
+    },
+  });
+
+  return data.map((group) => {
+    return {
+      id: group.id,
+      name: group.name,
+      recommendedDiscountPercentage: group.recommendedDiscountPercentage,
+      countries: group.countries,
+      discount: group.countryGroupDiscounts.at(0),
+    };
+  });
+}
+
+async function getProductCustomizationInternal({
+  userId,
+  productId,
+}: {
+  userId: string;
+  productId: string;
+}) {
+  const data = await db.query.ProductTable.findFirst({
+    where: ({ id, clerkUserId }, { and, eq }) =>
+      and(eq(id, productId), eq(clerkUserId, userId)),
+    with: {
+      productCustomization: true,
+    },
+  });
+
+  return data?.productCustomization;
+}
+
+function getProductsInternal(userId: string, { limit }: { limit?: number }) {
+  return db.query.ProductTable.findMany({
+    where: ({ clerkUserId }, { eq }) => eq(clerkUserId, userId),
+    orderBy: ({ createdAt }, { desc }) => desc(createdAt),
+    limit,
+  });
+}
+
+function getProductInternal({ id, userId }: { id: string; userId: string }) {
+  return db.query.ProductTable.findFirst({
+    where: ({ clerkUserId, id: idCol }, { eq, and }) =>
+      and(eq(clerkUserId, userId), eq(idCol, id)),
+  });
+}
+
 async function getProductCountInternal(userId: string) {
   const counts = await db
     .select({ productCount: count() })
@@ -295,10 +327,70 @@ async function getProductCountInternal(userId: string) {
   return counts[0]?.productCount ?? 0;
 }
 
-export function getProductCount(userId: string) {
-  const cacheFn = dbCache(getProductCountInternal, {
-    tags: [getUserTag(userId, CACHE_TAGS.products)],
+async function getProductForBannerInternal({
+  id,
+  countryCode,
+  url,
+}: {
+  id: string;
+  countryCode: string;
+  url: string;
+}) {
+  const data = await db.query.ProductTable.findFirst({
+    where: ({ id: idCol, url: urlCol }, { eq, and }) =>
+      and(eq(idCol, id), eq(urlCol, removeTrailingSlash(url))),
+    columns: {
+      id: true,
+      clerkUserId: true,
+    },
+    with: {
+      productCustomization: true,
+      countryGroupDiscounts: {
+        columns: {
+          coupon: true,
+          discountPercentage: true,
+        },
+        with: {
+          countryGroup: {
+            columns: {},
+            with: {
+              countries: {
+                columns: {
+                  id: true,
+                  name: true,
+                },
+                limit: 1,
+                where: ({ code }, { eq }) => eq(code, countryCode),
+              },
+            },
+          },
+        },
+      },
+    },
   });
 
-  return cacheFn(userId);
+  const discount = data?.countryGroupDiscounts.find(
+    (discount) => discount.countryGroup.countries.length > 0
+  );
+  const country = discount?.countryGroup.countries[0];
+  const product =
+    data == null || data.productCustomization == null
+      ? undefined
+      : {
+          id: data.id,
+          clerkUserId: data.clerkUserId,
+          customization: data.productCustomization,
+        };
+
+  return {
+    product,
+    country,
+    discount:
+      discount == null
+        ? undefined
+        : {
+            coupon: discount.coupon,
+            percentage: discount.discountPercentage,
+          },
+  };
 }
